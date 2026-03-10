@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="DagTimer">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>DagTimer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;background:#000;overflow-x:hidden}
+body{font-family:'DM Sans',sans-serif;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+::-webkit-scrollbar{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes slideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+const e=React.createElement,{useState,useEffect,useRef,useCallback}=React;
+
+const C={bg:"#000",card:"#0a0a0a",cardBorder:"#141414",glow:"#d4a054",actBg:"#0d0b08",actBorder:"#2a2010",ok:"#22c55e",okBg:"#040d04",okBorder:"#0a1a0a",text:"#e8e4de",dim:"#3d3830",mut:"#666",accent:"#d4a054",train:"#22c55e",creative:"#a78bba",read:"#c4956a",focus:"#5b8fb9"};
+
+const DN=["Søndag","Mandag","Tirsdag","Onsdag","Torsdag","Fredag","Lørdag"];
+const DS=["Søn","Man","Tir","Ons","Tor","Fre","Lør"];
+
+function getActs(di){
+  if(di===0)return[
+    {id:"morgen",label:"Morgen-rutine",icon:"☀️",dur:15,color:C.focus,sub:"Sol · Pust · Kold"},
+    {id:"anki",label:"Anki",icon:"🧠",dur:20,color:C.accent,sub:"Vedligehold"},
+    {id:"japanese",label:"Japansk",icon:"🎧",dur:20,color:C.train,sub:"Passiv lytning"},
+    {id:"reading",label:"Læsning",icon:"📖",dur:120,color:C.read,sub:"Frit valg"}
+  ];
+  const cfgs={
+    1:{deep:"Calculus",ds:"Opgavebaseret",tr:"Pull A",rd:"Sapiens (Harari)"},
+    2:{deep:"Fysik",ds:"Mekanik + opgaver",tr:"Push B",rd:"Skønlitteratur"},
+    3:{deep:"Calculus",ds:"Opgavebaseret",tr:"Legs",rd:"Popper / Kuhn"},
+    4:{deep:"Fysik",ds:"Elektromagnetisme",tr:"Pull B",rd:"Skønlitteratur",br:"Statistik"},
+    5:{deep:"Kemi",ds:"Opgavebaseret",tr:"Push A",rd:"Penguin History"},
+    6:{deep:"Essay",ds:"Ugentlig essay-dag",tr:"Legs",rd:"Skønlitteratur"}
+  };
+  const c=cfgs[di],a=[
+    {id:"morgen",label:"Morgen-rutine",icon:"☀️",dur:15,color:C.focus,sub:"Sol · Pust · Kold"},
+    {id:"anki",label:"Anki",icon:"🧠",dur:45,color:C.accent,sub:"Japansk · Dansk · Engelsk"},
+    {id:"deep",label:c.deep,icon:"📐",dur:c.br?90:160,color:C.accent,sub:c.ds}
+  ];
+  if(c.br)a.push({id:"breadth",label:c.br,icon:"📊",dur:70,color:C.focus,sub:"Breddeblok"});
+  a.push(
+    {id:"walk",label:"Gåtur",icon:"🚶",dur:20,color:C.dim,sub:"Uden input"},
+    {id:"training",label:c.tr,icon:"💪",dur:90,color:C.train},
+    {id:"japanese",label:"Japansk",icon:"🎧",dur:40,color:C.train,sub:"Lytning + shadowing"},
+    {id:"guitar",label:"Guitar",icon:"🎸",dur:60,color:C.creative,sub:"Deliberate practice"},
+    {id:"reading",label:"Læsning",icon:"📖",dur:120,color:C.read,sub:c.rd},
+    {id:"journal",label:"Journaling",icon:"✍️",dur:30,color:C.accent}
+  );
+  return a;
+}
+
+const dateKey=()=>new Date().toISOString().slice(0,10);
+const SK="dtimer-v3-";
+
+// localStorage wrapper (PWA — no window.storage)
+const store={
+  get(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null}catch{return null}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}},
+};
+
+function fmt(s){
+  if(s<=0)return"0:00";
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+  return h>0?h+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0"):m+":"+String(sec).padStart(2,"0");
+}
+function fmtS(s){
+  if(s<=0)return"Færdig";
+  const h=Math.floor(s/3600),m=Math.ceil((s%3600)/60);
+  return h>0&&m>0?h+"t "+m+"m":h>0?h+"t":m+"m";
+}
+
+function App(){
+  const todayIdx=new Date().getDay();
+  const[di,setDi]=useState(todayIdx);
+  const[timers,setTimers]=useState({});
+  const[active,setActive]=useState(null);
+  const[loaded,setLoaded]=useState(false);
+  const lastTick=useRef(Date.now());
+  const acts=getActs(di);
+  const isToday=di===todayIdx;
+
+  // Wake lock to keep screen on while timer is running
+  const wakeLock=useRef(null);
+  useEffect(()=>{
+    if(!active){if(wakeLock.current){wakeLock.current.release().catch(()=>{});wakeLock.current=null}return}
+    if('wakeLock' in navigator){
+      navigator.wakeLock.request('screen').then(l=>{wakeLock.current=l}).catch(()=>{});
+    }
+    return()=>{if(wakeLock.current){wakeLock.current.release().catch(()=>{});wakeLock.current=null}};
+  },[active]);
+
+  useEffect(()=>{
+    const key=SK+dateKey()+"-"+di;
+    const saved=store.get(key);
+    if(saved){
+      setTimers(saved.timers||{});
+      setActive(isToday?(saved.active||null):null);
+    }else{
+      const init={};acts.forEach(a=>{init[a.id]=a.dur*60});
+      setTimers(init);setActive(null);
+    }
+    setLoaded(true);
+  },[di]);
+
+  const save=useCallback((t,a)=>{
+    const key=SK+dateKey()+"-"+di;
+    store.set(key,{timers:t,active:a});
+  },[di]);
+
+  useEffect(()=>{
+    if(!isToday||!active||!loaded)return;
+    const iv=setInterval(()=>{
+      const now=Date.now(),elapsed=Math.round((now-lastTick.current)/1000);
+      if(elapsed<1)return;
+      lastTick.current=now;
+      setTimers(prev=>{
+        const next={...prev},rem=(next[active]||0)-elapsed;
+        next[active]=Math.max(0,rem);
+        if(rem<=0){setActive(null);save(next,null)}
+        else save(next,active);
+        return next;
+      });
+    },1000);
+    return()=>clearInterval(iv);
+  },[active,isToday,loaded,save]);
+
+  const toggle=(id)=>{
+    if(!isToday||(timers[id]||0)<=0)return;
+    lastTick.current=Date.now();
+    const next=active===id?null:id;
+    setActive(next);save(timers,next);
+  };
+
+  const reset=()=>{
+    const init={};acts.forEach(a=>{init[a.id]=a.dur*60});
+    setTimers(init);setActive(null);save(init,null);
+  };
+
+  const totalRem=acts.reduce((s,a)=>s+(timers[a.id]||0),0);
+  const totalDur=acts.reduce((s,a)=>s+a.dur*60,0);
+  const pct=totalDur>0?Math.max(0,Math.min(100,((totalDur-totalRem)/totalDur)*100)):0;
+  const doneCount=acts.filter(a=>(timers[a.id]||0)<=0).length;
+
+  if(!loaded)return e("div",{style:{background:C.bg,minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}},
+    e("div",{style:{color:C.dim,fontSize:14}},"Indlæser..."));
+
+  return e("div",{style:{background:C.bg,minHeight:"100vh",color:C.text,maxWidth:480,margin:"0 auto",padding:"env(safe-area-inset-top, 16px) 12px 80px",WebkitFontSmoothing:"antialiased"}},
+
+    // Day selector
+    e("div",{style:{display:"flex",gap:4,marginBottom:20,overflowX:"auto",paddingBottom:4,paddingTop:8}},
+      DS.map((d,i)=>e("button",{key:i,onClick:()=>setDi(i),style:{
+        padding:"7px 14px",fontSize:12,fontWeight:i===di?700:500,borderRadius:8,
+        border:i===todayIdx&&i!==di?"1px solid "+C.cardBorder:"1px solid transparent",
+        background:i===di?C.actBg:"transparent",
+        color:i===di?C.glow:i===todayIdx?C.text:C.mut,
+        cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontFamily:"inherit"
+      }},d+(i===todayIdx?" ●":"")))
+    ),
+
+    // Header
+    e("div",{style:{marginBottom:24}},
+      e("div",{style:{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:8}},
+        e("div",null,
+          e("span",{style:{fontFamily:"'JetBrains Mono',monospace",fontSize:32,fontWeight:700,color:totalRem===0?C.ok:C.text,letterSpacing:"-.03em"}},fmtS(totalRem)),
+          totalRem>0?e("span",{style:{fontSize:12,color:C.dim,marginLeft:8}},"tilbage"):
+          e("span",{style:{fontSize:12,color:C.ok,marginLeft:8}},"— alt klaret ✓")
+        ),
+        e("div",{style:{fontSize:11,color:C.dim,fontFamily:"'JetBrains Mono',monospace"}},doneCount+"/"+acts.length)
+      ),
+      e("div",{style:{height:3,background:C.cardBorder,borderRadius:2,overflow:"hidden"}},
+        e("div",{style:{height:"100%",borderRadius:2,background:pct>=100?C.ok:"linear-gradient(90deg,"+C.glow+","+C.glow+"dd)",width:pct+"%",transition:"width 1s linear"}})
+      )
+    ),
+
+    // Activity list
+    e("div",{style:{display:"flex",flexDirection:"column",gap:6}},
+      acts.map((act,idx)=>{
+        const rem=timers[act.id]||0,tot=act.dur*60,done=rem<=0,isAct=active===act.id;
+        const p=tot>0?Math.max(0,Math.min(100,((tot-rem)/tot)*100)):100;
+        let bg=C.card,bd=C.cardBorder;
+        if(done){bg=C.okBg;bd=C.okBorder}
+        else if(isAct){bg=C.actBg;bd=C.actBorder}
+
+        return e("div",{key:act.id,onClick:()=>toggle(act.id),style:{
+          background:bg,border:"1px solid "+bd,borderRadius:12,
+          padding:isAct?"14px 14px 12px":"11px 14px 9px",
+          cursor:isToday&&!done?"pointer":"default",
+          opacity:done?.45:1,transition:"all .2s ease",
+          animation:"slideIn .3s ease "+idx*.04+"s both",
+          position:"relative",overflow:"hidden"
+        }},
+          isAct&&e("div",{style:{position:"absolute",left:0,top:0,bottom:0,width:3,background:C.glow,borderRadius:"2px 0 0 2px"}}),
+          e("div",{style:{display:"flex",alignItems:"center",gap:10}},
+            e("div",{style:{width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}},
+              done?e("span",{style:{fontSize:16,color:C.ok}},"✓"):e("span",null,act.icon)),
+            e("div",{style:{flex:1,minWidth:0}},
+              e("div",{style:{display:"flex",alignItems:"center",gap:6}},
+                e("span",{style:{fontSize:14,fontWeight:600,color:done?C.mut:C.text}},act.label),
+                isAct&&e("span",{style:{width:6,height:6,borderRadius:3,background:C.glow,animation:"pulse 1.5s ease-in-out infinite",flexShrink:0}})
+              ),
+              act.sub&&!done&&e("div",{style:{fontSize:11,color:C.dim,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},act.sub)
+            ),
+            e("div",{style:{textAlign:"right",flexShrink:0}},
+              done?e("div",{style:{fontSize:11,color:C.ok,fontWeight:600}},"Færdig"):
+              isAct?e("div",{style:{fontFamily:"'JetBrains Mono',monospace",fontSize:20,fontWeight:700,color:C.glow,letterSpacing:"-.02em"}},fmt(rem)):
+              e("div",{style:{fontFamily:"'JetBrains Mono',monospace",fontSize:14,fontWeight:500,color:C.mut}},fmtS(rem)),
+              !done&&!isAct&&e("div",{style:{fontSize:9,color:C.dim,marginTop:1}},"af "+act.dur+"m")
+            )
+          ),
+          !done&&e("div",{style:{height:2,background:isAct?C.actBorder:C.cardBorder,borderRadius:1,marginTop:8,overflow:"hidden"}},
+            e("div",{style:{height:"100%",borderRadius:1,background:isAct?C.glow:(act.color||C.mut)+"88",width:p+"%",transition:"width 1s linear"}}))
+        );
+      })
+    ),
+
+    // Status text
+    isToday&&!active&&totalRem>0&&e("div",{style:{textAlign:"center",marginTop:16,padding:"10px 0",fontSize:12,color:C.dim,fontStyle:"italic"}},"Tryk en aktivitet for at starte"),
+    !isToday&&e("div",{style:{textAlign:"center",marginTop:16,padding:"10px 0",fontSize:12,color:C.dim}},"Timere kan kun styres på dagens dato"),
+
+    // Footer buttons
+    e("div",{style:{marginTop:24,display:"flex",gap:8}},
+      isToday&&e("button",{onClick:reset,style:{flex:1,padding:"11px 0",borderRadius:10,border:"1px solid "+C.cardBorder,background:C.card,color:C.mut,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}},"Nulstil dag"),
+      isToday&&active&&e("button",{onClick:()=>{setActive(null);save(timers,null)},style:{flex:1,padding:"11px 0",borderRadius:10,border:"none",background:C.actBorder,color:C.glow,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"Pause alt")
+    ),
+
+    // Day info
+    e("div",{style:{marginTop:16,padding:"12px 14px",background:C.card,border:"1px solid "+C.cardBorder,borderRadius:10,fontSize:11,color:C.dim,lineHeight:1.5}},
+      DN[di]+" — "+acts.length+" aktiviteter — budget: "+fmtS(totalDur),
+      e("br"),
+      "Passiv japansk tæller ikke — kør det organisk."
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+
+// Register service worker
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
